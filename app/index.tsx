@@ -2,7 +2,19 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, FlatList, Image, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, FlatList, Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+
+// TỐI ƯU HÓA: Phân biệt type 'search' và 'subject' để dùng đúng API tốc độ cao
+const CATEGORIES = [
+  { id: 'bestseller', name: '🔥 Nổi Bật', query: 'bestseller', type: 'search' },
+  { id: 'psychology', name: '🧠 Tâm Lý', query: 'psychology', type: 'subject' },
+  { id: 'science', name: '🔬 Khoa Học', query: 'science', type: 'subject' },
+  { id: 'fantasy', name: '🪄 Viễn Tưởng', query: 'fantasy', type: 'subject' },
+  { id: 'romance', name: '❤️ Lãng Mạn', query: 'romance', type: 'subject' },
+  { id: 'history', name: '🏛️ Lịch Sử', query: 'history', type: 'subject' },
+  { id: 'business', name: '💼 Kinh Doanh', query: 'business', type: 'subject' },
+  { id: 'health', name: '🍎 Sức Khỏe', query: 'health', type: 'subject' }
+];
 
 export default function HomeScreen() {
   const [books, setBooks] = useState<any[]>([]);
@@ -14,6 +26,7 @@ export default function HomeScreen() {
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | 'fav'>('all');
+  const [activeCategory, setActiveCategory] = useState(CATEGORIES[0].id);
 
   const { tab } = useLocalSearchParams();
 
@@ -58,23 +71,50 @@ export default function HomeScreen() {
     }
   };
 
-  useEffect(() => { fetchPopularBooks(); }, []);
+  useEffect(() => { 
+    if (activeTab === 'all' && !search.trim()) {
+      fetchBooksByCategory(activeCategory); 
+    }
+  }, [activeCategory, activeTab]);
 
-  // SỬ DỤNG OPEN LIBRARY API - MIỄN PHÍ VÀ KHÔNG BỊ CHẶN RATE LIMIT
-  const fetchPopularBooks = async () => {
+  const fetchBooksByCategory = async (catId: string) => {
     setLoading(true);
     setErrorMsg("");
     try {
-      const url = `https://openlibrary.org/search.json?q=bestseller&limit=20`;
+      const category = CATEGORIES.find(c => c.id === catId);
+      let url = "";
+      
+      // TỐI ƯU: Nếu là Thể loại -> dùng API Subjects cực nhanh
+      // Nếu là Tìm kiếm chung (bestseller) -> Dùng API Search nhưng BẮT BUỘC có tham số &fields để giảm tải
+      if (category?.type === 'subject') {
+        url = `https://openlibrary.org/subjects/${category.query}.json?limit=20`;
+      } else {
+        url = `https://openlibrary.org/search.json?q=${category?.query}&limit=20&fields=key,title,author_name,cover_i`;
+      }
+      
       const res = await fetch(url);
-
       if (!res.ok) throw new Error("Lỗi kết nối máy chủ");
       
       const data = await res.json();
-      if (data.docs && data.docs.length > 0) {
-        setBooks(data.docs);
+      let booksData = [];
+
+      // API Subjects trả về mảng 'works', API Search trả về 'docs'. Chúng ta cần đồng bộ hóa chúng.
+      if (category?.type === 'subject') {
+        booksData = (data.works || []).map((work: any) => ({
+          key: work.key,
+          title: work.title,
+          author_name: work.authors ? work.authors.map((a: any) => a.name) : ["Nhiều tác giả"],
+          cover_i: work.cover_id
+        }));
       } else {
-        setErrorMsg("Không tải được sách.");
+        booksData = data.docs || [];
+      }
+
+      if (booksData.length > 0) {
+        setBooks(booksData);
+      } else {
+        setBooks([]);
+        setErrorMsg(`Không tìm thấy sách cho thể loại ${category?.name}.`);
       }
     } catch (err: any) { 
       setErrorMsg("Lỗi tải sách: " + err.message);
@@ -84,11 +124,15 @@ export default function HomeScreen() {
   };
 
   const handleSearch = async () => {
-    if (!search.trim()) { fetchPopularBooks(); return; }
+    if (!search.trim()) { 
+      fetchBooksByCategory(activeCategory); 
+      return; 
+    }
     setLoading(true); setActiveTab('all'); setErrorMsg("");
     try {
       const query = encodeURIComponent(search.trim());
-      const res = await fetch(`https://openlibrary.org/search.json?q=${query}&limit=20`);
+      // TỐI ƯU: Dùng &fields để chỉ lấy những gì cần hiển thị ra danh sách
+      const res = await fetch(`https://openlibrary.org/search.json?q=${query}&limit=20&fields=key,title,author_name,cover_i`);
       
       if (!res.ok) throw new Error("Lỗi API");
 
@@ -104,6 +148,12 @@ export default function HomeScreen() {
     } finally { 
       setLoading(false); 
     }
+  };
+
+  const handleSelectCategory = (catId: string) => {
+    if (activeCategory === catId) return; // Tránh tải lại nếu bấm vào đúng mục đang xem
+    setSearch(""); 
+    setActiveCategory(catId);
   };
 
   const handleTabFav = () => {
@@ -143,15 +193,51 @@ export default function HomeScreen() {
         </View>
 
         {activeTab === 'all' && (
-          <View style={styles.searchRow}>
-            <TextInput style={[styles.searchInput, { backgroundColor: theme.inputBg, color: theme.text, borderColor: theme.borderColor }]} 
-              placeholder="Tìm tên sách..." placeholderTextColor={theme.subText} value={search} onChangeText={setSearch} onSubmitEditing={handleSearch} />
-            <TouchableOpacity style={styles.searchBtn} onPress={handleSearch}><Text style={styles.searchBtnText}>Tìm</Text></TouchableOpacity>
-          </View>
+          <>
+            <View style={styles.searchRow}>
+              <TextInput style={[styles.searchInput, { backgroundColor: theme.inputBg, color: theme.text, borderColor: theme.borderColor }]} 
+                placeholder="Tìm tên sách..." placeholderTextColor={theme.subText} value={search} onChangeText={setSearch} onSubmitEditing={handleSearch} />
+              <TouchableOpacity style={styles.searchBtn} onPress={handleSearch}><Text style={styles.searchBtnText}>Tìm</Text></TouchableOpacity>
+            </View>
+
+            {!search.trim() && (
+              <View style={styles.categoryContainer}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 10 }}>
+                  {CATEGORIES.map((cat) => {
+                    const isActive = activeCategory === cat.id;
+                    return (
+                      <TouchableOpacity 
+                        key={cat.id} 
+                        style={[
+                          styles.categoryBtn, 
+                          { 
+                            backgroundColor: isActive ? theme.activeColor : theme.cardBg,
+                            borderColor: theme.borderColor
+                          }
+                        ]}
+                        onPress={() => handleSelectCategory(cat.id)}
+                      >
+                        <Text style={{ 
+                          color: isActive ? '#fff' : theme.text, 
+                          fontWeight: isActive ? 'bold' : 'normal',
+                          fontSize: 14
+                        }}>
+                          {cat.name}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
+          </>
         )}
 
         <Text style={[styles.sectionTitle, { color: theme.text }]}>
-          {activeTab === 'all' ? "Sách Khám Phá" : "Sách Yêu Thích"}
+          {activeTab === 'all' 
+            ? (search.trim() ? "Kết Quả Tìm Kiếm" : `Đang xem: ${CATEGORIES.find(c => c.id === activeCategory)?.name.replace(/🔥|🧠|🔬|🪄|❤️|🏛️|💼|🍎/g, '').trim()}`) 
+            : "Sách Yêu Thích"
+          }
         </Text>
 
         {errorMsg !== "" && <Text style={{color: '#ef4444', textAlign: 'center', marginBottom: 15, fontWeight: 'bold'}}>{errorMsg}</Text>}
@@ -170,7 +256,7 @@ export default function HomeScreen() {
         )}
 
         <View style={[styles.bottomBar, { backgroundColor: theme.bottomBarBg, borderColor: theme.borderColor }]}>
-          <TouchableOpacity style={styles.bottomTab} onPress={() => setActiveTab('all')}>
+          <TouchableOpacity style={styles.bottomTab} onPress={() => { setActiveTab('all'); setSearch(""); }}>
             <Text style={{ fontSize: 22, opacity: activeTab === 'all' ? 1 : 0.5 }}>📚</Text>
             <Text style={[styles.bottomTabText, { color: activeTab === 'all' ? theme.activeColor : theme.inactiveColor }]}>Khám phá</Text>
           </TouchableOpacity>
@@ -193,14 +279,16 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   flexContainer: { flex: 1 },
   container: { flex: 1, paddingHorizontal: 15, paddingTop: 15 },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 40, marginBottom: 20 },
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 40, marginBottom: 15 },
   headerTitle: { fontSize: 28, fontWeight: "900", letterSpacing: 1 },
   gearBtn: { padding: 10, borderRadius: 12 },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 15, marginLeft: 5 },
-  searchRow: { flexDirection: "row", marginBottom: 20 },
+  searchRow: { flexDirection: "row", marginBottom: 15 },
   searchInput: { flex: 1, padding: 12, borderRadius: 10, borderWidth: 1 },
   searchBtn: { marginLeft: 10, backgroundColor: "#3b82f6", justifyContent: "center", paddingHorizontal: 20, borderRadius: 10 },
   searchBtnText: { color: "#fff", fontWeight: "bold" },
+  categoryContainer: { marginBottom: 15 },
+  categoryBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, marginRight: 10, borderWidth: 1 },
   card: { width: "48%", borderRadius: 15, marginBottom: 15, overflow: "hidden", borderWidth: 1 },
   imageWrapper: { position: 'relative' },
   poster: { width: "100%", height: 250, resizeMode: "cover" },

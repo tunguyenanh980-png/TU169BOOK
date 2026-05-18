@@ -31,7 +31,7 @@ export default function SettingScreen() {
     if (Platform.OS === 'web') {
       if ((window as any).confirm("Bạn có chắc chắn muốn đăng xuất?")) performLogout();
     } else {
-      Alert.alert("Xác nhận", "Bạn có chắc chắn muốn đăng xuất khỏi ứng dụng Manga?", [
+      Alert.alert("Xác nhận", "Bạn có chắc chắn muốn đăng xuất khỏi ứng dụng?", [
         { text: "Hủy", style: "cancel" },
         { text: "Đăng xuất", style: "destructive", onPress: performLogout }
       ]);
